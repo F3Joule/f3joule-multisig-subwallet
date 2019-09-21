@@ -151,5 +151,5 @@ rev = '047e887d1191aa0b85f46570a432c5665bfc1b02'
 [package]
 authors = ['Parity Technologies <admin@parity.io>']
 edition = '2018'
-name = 'node-template-runtime'
+name = 'multisig-subwallet-runtime'
 version = '1.0.0'
