@@ -187,6 +187,8 @@ impl sudo::Trait for Runtime {
 
 impl multisigwallet::Trait for Runtime {
 	type Event = Event;
+	type Currency = balances::Module<Self>;
+	type TransactionId = u64;
 }
 
 construct_runtime!(
