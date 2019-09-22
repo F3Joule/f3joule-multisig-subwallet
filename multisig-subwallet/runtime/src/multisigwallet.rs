@@ -8,19 +8,19 @@ use {balances, timestamp};
 use system::{self, ensure_signed};
 
 pub const MIN_MULTISIG_WALLET_OWNERS: u16 = 2;
-pub const MAX_MULTISIG_WALLET_OWNERS: u16 = 15;
-pub const MAX_TRANSACTION_NOTES_LEN: u16 = 128;
+pub const MAX_MULTISIG_WALLET_OWNERS: u16 = 16;
+pub const MAX_TRANSACTION_NOTES_LEN: u16 = 256;
 
 pub const MSG_NOT_ENOUGH_OWNERS: &str = "There can not be less owners than allowed";
 pub const MSG_TOO_MANY_OWNERS: &str = "There can not be more owners than allowed";
-pub const MSG_MORE_REQUIRES_THAN_OWNERS: &str = "The required confirmation count can not be greater than owners count";
+pub const MSG_MORE_CONFIRMS_REQUIRED_THAN_OWNERS: &str = "The required confirmation count can not be greater than owners count";
 pub const MSG_WALLET_NOT_FOUND: &str = "Multi-signature wallet not found by id";
 pub const MSG_NOT_A_WALLET_OWNER: &str = "Account is not a wallet owner";
 pub const MSG_TX_NOTES_GREATER_THAN_ALLOWED: &str = "Transaction notes are too long";
-pub const MSG_TRANSACTION_NOT_FOUND: &str = "Transaction not found on a wallets";
-pub const MSG_TX_VALUE_GREATER_THAN_ALLOWED: &str = "Transaction transfer value is greater than allowed";
-pub const MSG_TX_VALUE_GREATER_THAN_BALANCE: &str = "Transaction transfer value is greater than a wallet balance";
-pub const MSG_ACCOUNT_ALREADY_CONFIRMED_TX: &str = "Account has already confirmed transaction";
+pub const MSG_TRANSACTION_NOT_FOUND: &str = "Transaction not found in a wallet";
+pub const MSG_TX_VALUE_GREATER_THAN_ALLOWED: &str = "Transaction value is greater than allowed";
+pub const MSG_TX_VALUE_GREATER_THAN_BALANCE: &str = "Transaction value is greater than a wallet balance";
+pub const MSG_ACCOUNT_ALREADY_CONFIRMED_TX: &str = "Account has already confirmed this transaction";
 pub const MSG_NOT_ENOUGH_CONFIRMS_ON_TX: &str = "There are not enough confirmations on a transaction";
 pub const MSG_FREE_BALANCE_TOO_LOW: &str = "Wallet's free balance is lower than a transaction value";
 pub const MSG_TX_ALREADY_CONFIRMED: &str = "Transaction is already confirmed";
@@ -37,7 +37,7 @@ pub struct Wallet<T: Trait> {
 	created: Change<T>,
 	id: T::AccountId,
 	owners: Vec<T::AccountId>,
-	max_take_value: CurrencyBalance<T>,
+	max_tx_value: CurrencyBalance<T>,
 	confirms_required: u16,
 }
 
@@ -58,7 +58,6 @@ type CurrencyBalance<T> =
 pub trait Trait: system::Trait + balances::Trait + timestamp::Trait {
 	type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 	type Currency: Currency<Self::AccountId>;
-
 	type TransactionId: Parameter + Member + SimpleArithmetic + Default + Copy + As<usize>;
 }
 
@@ -73,7 +72,7 @@ decl_storage! {
 
 		TxById get(tx_by_id): map T::TransactionId => Option<Transaction<T>>;
 		PendingTxIdsByWalletId get(pending_tx_ids_by_wallet_id): map T::AccountId => Vec<T::TransactionId>;
-		ConfirmedTxIdsByWalletId get(confirmed_tx_ids_by_wallet_id): map T::AccountId => Vec<T::TransactionId>;
+		ExecutedTxIdsByWalletId get(executed_tx_ids_by_wallet_id): map T::AccountId => Vec<T::TransactionId>;
     NextTxId get(next_tx_id): T::TransactionId = T::TransactionId::sa(1);
 	}
 }
@@ -83,36 +82,40 @@ decl_module! {
 		fn deposit_event<T>() = default;
 
 		fn create_wallet(origin, wallet_id: T::AccountId, owners: Vec<T::AccountId>,
-			max_take_value: CurrencyBalance<T>, confirms_required: u16) -> Result
+			max_tx_value: CurrencyBalance<T>, confirms_required: u16) -> Result
 		{
 			let creator = ensure_signed(origin)?;
 			let mut owners_map: BTreeMap<T::AccountId, bool> = BTreeMap::new();
 			let mut wallet_owners: Vec<T::AccountId> = vec![];
 
-			ensure!(owners.len() >= MIN_MULTISIG_WALLET_OWNERS as usize, MSG_NOT_ENOUGH_OWNERS);
-			ensure!(owners.len() <= MAX_MULTISIG_WALLET_OWNERS as usize, MSG_TOO_MANY_OWNERS);
-
 			for owner in owners.iter() {
 				if !owners_map.contains_key(&owner) {
-					wallet_owners.push(owner.clone());
 					owners_map.insert(owner.clone(), true);
+					wallet_owners.push(owner.clone());
 				}
 			}
 
-			ensure!(confirms_required as usize <= owners.len(), MSG_MORE_REQUIRES_THAN_OWNERS);
+			let owners_count = wallet_owners.len() as u16;
+			ensure!(owners_count >= MIN_MULTISIG_WALLET_OWNERS, MSG_NOT_ENOUGH_OWNERS);
+			ensure!(owners_count <= MAX_MULTISIG_WALLET_OWNERS, MSG_TOO_MANY_OWNERS);
+
+			ensure!(confirms_required <= owners_count, MSG_MORE_CONFIRMS_REQUIRED_THAN_OWNERS);
 
 			// let public_key: sr25519::Public = sr25519::Pair::generate().public();
 			// let wallet_id: T::AccountId = public_key.using_encoded(Decode::decode).expect("panic!");
 			let new_wallet = Wallet {
 				created: Self::new_change(creator.clone()),
 				id: wallet_id.clone(),
-				owners: wallet_owners,
-				max_take_value,
+				owners: wallet_owners.clone(),
+				max_tx_value,
 				confirms_required
 			};
 
 			<WalletById<T>>::insert(wallet_id.clone(), new_wallet);
-			<WalletIdsByAccountId<T>>::mutate(creator.clone(), |ids| ids.push(wallet_id.clone()));
+
+			for owner in wallet_owners.iter() {
+				<WalletIdsByAccountId<T>>::mutate(owner.clone(), |ids| ids.push(wallet_id.clone()));
+			}
 
 			Self::deposit_event(RawEvent::WalletCreated(creator, wallet_id));
 
@@ -122,17 +125,21 @@ decl_module! {
 		fn submit_transaction(origin, wallet_id: T::AccountId, destination: T::AccountId,
 			value: CurrencyBalance<T>, notes: Vec<u8>) -> Result
 		{
-			let creator = ensure_signed(origin)?;
+			let sender = ensure_signed(origin)?;
 
 			ensure!(notes.len() <= MAX_TRANSACTION_NOTES_LEN as usize, MSG_TX_NOTES_GREATER_THAN_ALLOWED);
+
 			let wallet = Self::wallet_by_id(wallet_id.clone()).ok_or(MSG_WALLET_NOT_FOUND)?;
-			ensure!(wallet.owners.iter().any(|x| *x == creator.clone()), MSG_NOT_A_WALLET_OWNER);
-			ensure!(value <= wallet.max_take_value, MSG_TX_VALUE_GREATER_THAN_ALLOWED);
-			ensure!(T::Currency::free_balance(&wallet_id) >= value, MSG_TX_VALUE_GREATER_THAN_BALANCE);
+
+			let is_wallet_owner = wallet.owners.iter().any(|owner| *owner == sender.clone());
+			ensure!(is_wallet_owner, MSG_NOT_A_WALLET_OWNER);
+
+			ensure!(value <= wallet.max_tx_value, MSG_TX_VALUE_GREATER_THAN_ALLOWED);
+			ensure!(value <= T::Currency::free_balance(&wallet_id), MSG_TX_VALUE_GREATER_THAN_BALANCE);
 
 			let transaction_id = Self::next_tx_id();
 			let ref mut new_transaction = Transaction {
-				created: Self::new_change(creator.clone()),
+				created: Self::new_change(sender.clone()),
 				id: transaction_id,
 				destination,
 				value,
@@ -141,36 +148,40 @@ decl_module! {
 				executed: false
 			};
 
-			new_transaction.confirmed_by.push(creator.clone());
+			new_transaction.confirmed_by.push(sender.clone());
 
 			<TxById<T>>::insert(transaction_id, new_transaction);
 			<PendingTxIdsByWalletId<T>>::mutate(wallet_id.clone(), |ids| ids.push(transaction_id));
 			<NextTxId<T>>::mutate(|n| { *n += T::TransactionId::sa(1); });
 
-			Self::deposit_event(RawEvent::TransactionCreated(creator, wallet_id, transaction_id));
+			Self::deposit_event(RawEvent::TransactionSubmitted(sender, wallet_id, transaction_id));
 
 			Ok(())
 		}
 
 		fn confirm_transaction(origin, wallet_id: T::AccountId, tx_id: T::TransactionId) -> Result {
-			let confirmator = ensure_signed(origin)?;
+			let sender = ensure_signed(origin)?;
 
 			let wallet = Self::wallet_by_id(wallet_id.clone()).ok_or(MSG_WALLET_NOT_FOUND)?;
-			ensure!(wallet.owners.iter().any(|x| *x == confirmator.clone()), MSG_NOT_A_WALLET_OWNER);
+			
+			let is_wallet_owner = wallet.owners.iter().any(|owner| *owner == sender.clone());
+			ensure!(is_wallet_owner, MSG_NOT_A_WALLET_OWNER);
 
 			let mut transaction = Self::tx_by_id(tx_id).ok_or(MSG_TRANSACTION_NOT_FOUND)?;
-			ensure!(!transaction.confirmed_by.iter().any(|x| *x == confirmator.clone()), MSG_ACCOUNT_ALREADY_CONFIRMED_TX);
 
-			transaction.confirmed_by.push(confirmator.clone());
+			let sender_not_confirmed_yet = !transaction.confirmed_by.iter().any(|account| *account == sender.clone());
+			ensure!(sender_not_confirmed_yet, MSG_ACCOUNT_ALREADY_CONFIRMED_TX);
+
+			transaction.confirmed_by.push(sender.clone());
 
 			if transaction.confirmed_by.len() == wallet.confirms_required as usize {
-				Self::execute_transaction(confirmator.clone(), wallet.clone(), transaction.clone())?;
+				Self::execute_transaction(sender.clone(), wallet.clone(), transaction.clone())?;
 			} else {
 				<TxById<T>>::insert(tx_id, transaction);
 				Self::change_tx_from_pending_to_confirmed(wallet_id.clone(), tx_id)?;
 			}
 
-			Self::deposit_event(RawEvent::TransactionSubmitted(confirmator, wallet_id, tx_id));
+			Self::deposit_event(RawEvent::TransactionSubmitted(sender, wallet_id, tx_id));
 
 			Ok(())
 		}
@@ -183,7 +194,6 @@ decl_event!(
 		<T as Trait>::TransactionId
 	{
 		WalletCreated(AccountId, AccountId),
-		TransactionCreated(AccountId, AccountId, TransactionId),
 		TransactionSubmitted(AccountId, AccountId, TransactionId),
 		TransactionExecuted(AccountId, AccountId, TransactionId),
 	}
@@ -225,10 +235,10 @@ impl<T: Trait> Module<T> {
 	fn change_tx_from_pending_to_confirmed(wallet_id: T::AccountId, tx_id: T::TransactionId) -> Result {
 		ensure!(Self::wallet_by_id(wallet_id.clone()).is_some(), MSG_WALLET_NOT_FOUND);
 		ensure!(Self::tx_by_id(tx_id).is_some(), MSG_TRANSACTION_NOT_FOUND);
-		ensure!(Self::confirmed_tx_ids_by_wallet_id(wallet_id.clone()).iter().any(|&x| x == tx_id), MSG_TX_ALREADY_CONFIRMED);
+		ensure!(Self::executed_tx_ids_by_wallet_id(wallet_id.clone()).iter().any(|&x| x == tx_id), MSG_TX_ALREADY_CONFIRMED);
 
 		<PendingTxIdsByWalletId<T>>::mutate(wallet_id.clone(), |txs| Self::vec_remove_on(txs, tx_id));
-		<ConfirmedTxIdsByWalletId<T>>::mutate(wallet_id.clone(), |ids| ids.push(tx_id));
+		<ExecutedTxIdsByWalletId<T>>::mutate(wallet_id.clone(), |ids| ids.push(tx_id));
 
 		Ok(())
 	}
