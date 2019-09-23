@@ -1,5 +1,5 @@
 [[bin]]
-name = 'node-template'
+name = 'multisig-subwallet'
 path = 'src/main.rs'
 [profile.release]
 panic = 'unwind'
@@ -39,7 +39,7 @@ git = 'https://github.com/paritytech/substrate.git'
 package = 'substrate-network'
 rev = '047e887d1191aa0b85f46570a432c5665bfc1b02'
 
-[dependencies.node-template-runtime]
+[dependencies.multisig-subwallet-runtime]
 path = 'runtime'
 
 [dependencies.primitives]
@@ -76,7 +76,7 @@ rev = '047e887d1191aa0b85f46570a432c5665bfc1b02'
 authors = ['Parity Technologies <admin@parity.io>']
 build = 'build.rs'
 edition = '2018'
-name = 'node-template'
+name = 'multisig-subwallet'
 version = '1.0.0'
 
 [build-dependencies]
