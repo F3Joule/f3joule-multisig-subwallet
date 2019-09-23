@@ -1,0 +1,25 @@
+{
+  "Change": {
+    "account": "AccountId",
+    "block": "BlockNumber",
+    "time": "Moment"
+  },
+  "TransactionId": "u64",
+  "CurrencyBalance": "u64",
+  "Wallet": {
+    "created": "Change",
+    "id": "AccountId",
+    "owners": "Vec<AccountId>",
+    "max_tx_value": "CurrencyBalance",
+    "confirms_required": "u16"
+  },
+  "Transaction": {
+    "created": "Change",
+    "id": "TransactionId",
+    "destination": "AccountId",
+    "value": "CurrencyBalance",
+    "notes": "Vec<u8>",
+    "confirmed_by": "Vec<AccountId>",
+    "executed": "bool"
+  }
+}
