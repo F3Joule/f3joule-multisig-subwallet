@@ -27,7 +27,7 @@ A development version of multi-signature wallet on Substrate, started at Blockch
    * Change remote node/endpoint to "Local node"
    * Change interface operation mode to "Fully featured"
 * Go to [Polkadot.JS Apps => Settings => Developer](https://polkadot.js.org/apps/#/settings/developer).
-   * Copy content from `types.json` and paste it into a text area on a page.
+   * Copy content from [types.json](./types.json) and paste it into a text area on a page.
 * Press save. 
 
 * Interact with your node and hack away!
