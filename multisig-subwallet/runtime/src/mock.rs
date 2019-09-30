@@ -1,8 +1,8 @@
 #![cfg(test)]
 
 pub use super::multisigwallet;
+pub use support::traits::Currency;
 pub use system;
-use balances;
 
 pub use primitives::{H256, Blake2Hasher};
 pub use runtime_primitives::{
@@ -18,6 +18,7 @@ impl_outer_origin! {
 }
 
 pub type AccountId = u64;
+pub type TransactionId = u64;
 pub type CurrencyBalance = u32;
 
 #[derive(Clone, Eq, PartialEq)]
@@ -58,6 +59,7 @@ impl multisigwallet::Trait for Test {
 }
 
 pub type MultisigWallet = multisigwallet::Module<Test>;
+pub type Balances = balances::Module<Test>;
 
 pub fn test_ext() -> runtime_io::TestExternalities<Blake2Hasher> {
   system::GenesisConfig::<Test>::default()
