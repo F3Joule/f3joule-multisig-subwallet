@@ -14,6 +14,7 @@ pub const MAX_TRANSACTION_NOTES_LEN: u16 = 256;
 pub const MSG_NOT_ENOUGH_OWNERS: &str = "There can not be less owners than allowed";
 pub const MSG_TOO_MANY_OWNERS: &str = "There can not be more owners than allowed";
 pub const MSG_MORE_CONFIRMS_REQUIRED_THAN_OWNERS: &str = "The required confirmation count can not be greater than owners count";
+pub const MSG_CANNOT_REQUIRE_ZERO_CONFIRMS: &str = "The required confirmation count can not be less than 1";
 pub const MSG_WALLET_NOT_FOUND: &str = "Multi-signature wallet not found by id";
 pub const MSG_NOT_A_WALLET_OWNER: &str = "Account is not a wallet owner";
 pub const MSG_TX_NOTES_GREATER_THAN_ALLOWED: &str = "Transaction notes are too long";
@@ -23,36 +24,36 @@ pub const MSG_TX_VALUE_GREATER_THAN_BALANCE: &str = "Transaction value is greate
 pub const MSG_ACCOUNT_ALREADY_CONFIRMED_TX: &str = "Account has already confirmed this transaction";
 pub const MSG_NOT_ENOUGH_CONFIRMS_ON_TX: &str = "There are not enough confirmations on a transaction";
 pub const MSG_FREE_BALANCE_TOO_LOW: &str = "Wallet's free balance is lower than a transaction value";
-pub const MSG_TX_ALREADY_CONFIRMED: &str = "Transaction is already confirmed";
+pub const MSG_TX_ALREADY_EXECUTED: &str = "Transaction is already executed";
 
 #[derive(Clone, Encode, Decode)]
 pub struct Change<T: Trait> {
-	account: T::AccountId,
+	pub account: T::AccountId,
 	block: T::BlockNumber,
 	time: T::Moment,
 }
 
 #[derive(Clone, Encode, Decode)]
 pub struct Wallet<T: Trait> {
-	created: Change<T>,
-	id: T::AccountId,
-	owners: Vec<T::AccountId>,
-	max_tx_value: CurrencyBalance<T>,
-	confirms_required: u16,
+	pub created: Change<T>,
+	pub id: T::AccountId,
+	pub owners: Vec<T::AccountId>,
+	pub max_tx_value: CurrencyBalance<T>,
+	pub confirms_required: u16,
 }
 
 #[derive(Clone, Encode, Decode)]
 pub struct Transaction<T: Trait> {
-	created: Change<T>,
-	id: T::TransactionId,
-	destination: T::AccountId,
-	value: CurrencyBalance<T>,
-	notes: Vec<u8>,
-	confirmed_by: Vec<T::AccountId>,
-	executed: bool,
+	pub created: Change<T>,
+	pub id: T::TransactionId,
+	pub destination: T::AccountId,
+	pub value: CurrencyBalance<T>,
+	pub notes: Vec<u8>,
+	pub confirmed_by: Vec<T::AccountId>,
+	pub executed: bool,
 }
 
-type CurrencyBalance<T> = 
+type CurrencyBalance<T> =
 	<<T as Trait>::Currency as Currency<<T as system::Trait>::AccountId>>::Balance;
 
 pub trait Trait: system::Trait + balances::Trait + timestamp::Trait {
@@ -81,7 +82,7 @@ decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		fn deposit_event<T>() = default;
 
-		fn create_wallet(origin, wallet_id: T::AccountId, owners: Vec<T::AccountId>,
+		pub fn create_wallet(origin, wallet_id: T::AccountId, owners: Vec<T::AccountId>,
 			max_tx_value: CurrencyBalance<T>, confirms_required: u16) -> Result
 		{
 			let creator = ensure_signed(origin)?;
@@ -100,6 +101,7 @@ decl_module! {
 			ensure!(owners_count <= MAX_MULTISIG_WALLET_OWNERS, MSG_TOO_MANY_OWNERS);
 
 			ensure!(confirms_required <= owners_count, MSG_MORE_CONFIRMS_REQUIRED_THAN_OWNERS);
+			ensure!(confirms_required > 0, MSG_CANNOT_REQUIRE_ZERO_CONFIRMS);
 
 			// let public_key: sr25519::Public = sr25519::Pair::generate().public();
 			// let wallet_id: T::AccountId = public_key.using_encoded(Decode::decode).expect("panic!");
@@ -122,7 +124,7 @@ decl_module! {
 			Ok(())
 		}
 
-		fn submit_transaction(origin, wallet_id: T::AccountId, destination: T::AccountId,
+		pub fn submit_transaction(origin, wallet_id: T::AccountId, destination: T::AccountId,
 			value: CurrencyBalance<T>, notes: Vec<u8>) -> Result
 		{
 			let sender = ensure_signed(origin)?;
@@ -159,7 +161,7 @@ decl_module! {
 			Ok(())
 		}
 
-		fn confirm_transaction(origin, wallet_id: T::AccountId, tx_id: T::TransactionId) -> Result {
+		pub fn confirm_transaction(origin, wallet_id: T::AccountId, tx_id: T::TransactionId) -> Result {
 			let sender = ensure_signed(origin)?;
 
 			let wallet = Self::wallet_by_id(wallet_id.clone()).ok_or(MSG_WALLET_NOT_FOUND)?;
@@ -178,7 +180,6 @@ decl_module! {
 				Self::execute_transaction(sender.clone(), wallet.clone(), transaction.clone())?;
 			} else {
 				<TxById<T>>::insert(tx_id, transaction);
-				Self::change_tx_from_pending_to_confirmed(wallet_id.clone(), tx_id)?;
 			}
 
 			Self::deposit_event(RawEvent::TransactionSubmitted(sender, wallet_id, tx_id));
@@ -225,80 +226,21 @@ impl<T: Trait> Module<T> {
 		transaction.executed = true;
 
 		<TxById<T>>::insert(tx_id, transaction);
-		Self::change_tx_from_pending_to_confirmed(wallet_id.clone(), tx_id)?;
+		Self::change_tx_from_pending_to_executed(wallet_id.clone(), tx_id)?;
 
 		Self::deposit_event(RawEvent::TransactionExecuted(executer, wallet_id, tx_id));
 
 		Ok(())
 	}
 
-	fn change_tx_from_pending_to_confirmed(wallet_id: T::AccountId, tx_id: T::TransactionId) -> Result {
+	fn change_tx_from_pending_to_executed(wallet_id: T::AccountId, tx_id: T::TransactionId) -> Result {
 		ensure!(Self::wallet_by_id(wallet_id.clone()).is_some(), MSG_WALLET_NOT_FOUND);
 		ensure!(Self::tx_by_id(tx_id).is_some(), MSG_TRANSACTION_NOT_FOUND);
-		ensure!(Self::executed_tx_ids_by_wallet_id(wallet_id.clone()).iter().any(|&x| x == tx_id), MSG_TX_ALREADY_CONFIRMED);
+		ensure!(!Self::executed_tx_ids_by_wallet_id(wallet_id.clone()).iter().any(|&x| x == tx_id), MSG_TX_ALREADY_EXECUTED);
 
 		<PendingTxIdsByWalletId<T>>::mutate(wallet_id.clone(), |txs| Self::vec_remove_on(txs, tx_id));
 		<ExecutedTxIdsByWalletId<T>>::mutate(wallet_id.clone(), |ids| ids.push(tx_id));
 
 		Ok(())
-	}
-}
-
-/// tests for this module
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	use runtime_io::with_externalities;
-	use primitives::{H256, Blake2Hasher};
-	use support::{impl_outer_origin, assert_ok};
-	use runtime_primitives::{
-		BuildStorage,
-		traits::{BlakeTwo256, IdentityLookup},
-		testing::{Digest, DigestItem, Header}
-	};
-
-	impl_outer_origin! {
-		pub enum Origin for Test {}
-	}
-
-	// For testing the module, we construct most of a mock runtime. This means
-	// first constructing a configuration type (`Test`) which `impl`s each of the
-	// configuration traits of modules we want to use.
-	#[derive(Clone, Eq, PartialEq)]
-	pub struct Test;
-	impl system::Trait for Test {
-		type Origin = Origin;
-		type Index = u64;
-		type BlockNumber = u64;
-		type Hash = H256;
-		type Hashing = BlakeTwo256;
-		type Digest = Digest;
-		type AccountId = u64;
-		type Lookup = IdentityLookup<Self::AccountId>;
-		type Header = Header;
-		type Event = ();
-		type Log = DigestItem;
-	}
-	impl Trait for Test {
-		type Event = ();
-	}
-	type MultisigWalletModule = Module<Test>;
-
-	// This function basically just builds a genesis storage key/value store according to
-	// our desired mockup.
-	fn new_test_ext() -> runtime_io::TestExternalities<Blake2Hasher> {
-		system::GenesisConfig::<Test>::default().build_storage().unwrap().0.into()
-	}
-
-	#[test]
-	fn it_works_for_default_value() {
-		with_externalities(&mut new_test_ext(), || {
-			// Just a dummy test for the dummy funtion `do_something`
-			// calling the `do_something` function with a value 42
-			assert_ok!(MultisigWalletModule::do_something(Origin::signed(1), 42));
-			// asserting that the stored value is equal to what we stored
-			assert_eq!(MultisigWalletModule::something(), Some(42));
-		});
 	}
 }

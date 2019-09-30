@@ -32,6 +32,9 @@ pub use runtime_primitives::{Permill, Perbill};
 pub use timestamp::BlockPeriod;
 pub use support::{StorageValue, construct_runtime};
 
+mod mock;
+mod tests;
+
 /// The type that is used for identifying authorities.
 pub type AuthorityId = <AuthoritySignature as Verify>::Signer;
 
@@ -54,7 +57,7 @@ pub type BlockNumber = u64;
 pub type Nonce = u64;
 
 /// Multi-signature wallet module
-mod multisigwallet;
+pub mod multisigwallet;
 
 /// Opaque types. These are used by the CLI to instantiate machinery that don't need to know
 /// the specifics of the runtime. They can then be made to be agnostic over specific formats
