@@ -57,7 +57,7 @@ pub type BlockNumber = u64;
 pub type Nonce = u64;
 
 /// Multi-signature wallet module
-pub mod multisigwallet;
+pub mod wallet;
 
 /// Opaque types. These are used by the CLI to instantiate machinery that don't need to know
 /// the specifics of the runtime. They can then be made to be agnostic over specific formats
@@ -188,7 +188,7 @@ impl sudo::Trait for Runtime {
 	type Proposal = Call;
 }
 
-impl multisigwallet::Trait for Runtime {
+impl wallet::Trait for Runtime {
 	type Event = Event;
 	type Currency = balances::Module<Self>;
 	type TransactionId = u64;
@@ -207,7 +207,7 @@ construct_runtime!(
 		Indices: indices,
 		Balances: balances,
 		Sudo: sudo,
-		MultisigWalletModule: multisigwallet::{Module, Call, Storage, Event<T>},
+		MultisigWalletModule: wallet::{Module, Call, Storage, Event<T>},
 	}
 );
 

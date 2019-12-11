@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-pub use super::multisigwallet;
+pub use super::wallet;
 pub use support::traits::Currency;
 pub use system;
 
@@ -52,13 +52,13 @@ impl balances::Trait for Test {
     type TransferPayment = ();
 }
 
-impl multisigwallet::Trait for Test {
+impl wallet::Trait for Test {
   type Event = ();
   type TransactionId = u64;
   type Currency = balances::Module<Self>;
 }
 
-pub type MultisigWallet = multisigwallet::Module<Test>;
+pub type MultisigWallet = wallet::Module<Test>;
 pub type Balances = balances::Module<Test>;
 
 pub fn test_ext() -> runtime_io::TestExternalities<Blake2Hasher> {

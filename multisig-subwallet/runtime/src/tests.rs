@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::mock::*;
-use super::multisigwallet::*;
+use super::wallet::*;
 
 use runtime_io::with_externalities;
 use support::*;
