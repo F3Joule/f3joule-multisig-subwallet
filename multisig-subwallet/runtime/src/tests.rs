@@ -10,10 +10,12 @@ const ACCOUNT1 : AccountId = 1;
 const ACCOUNT2 : AccountId = 2;
 const ACCOUNT3 : AccountId = 3;
 const ACCOUNT4 : AccountId = 4;
+const ACCOUNT5 : AccountId = 5;
 
 const WALLET1 : AccountId = 10;
+const WALLET2 : AccountId = 11;
 
-fn deposit_wallet(wallet_id: AccountId, value: CurrencyBalance) {
+fn deposit_wallet(wallet_id: AccountId, value: BalanceOf) {
   assert!(wallet_by_id(wallet_id).is_some());
 
   let _ = Balances::deposit_creating(&wallet_id, value);
@@ -51,7 +53,7 @@ fn _create_default_wallet() -> dispatch::Result {
   _create_wallet(None, None, None, None, None)
 }
 
-fn _create_wallet(origin: Option<Origin>, wallet_id: Option<AccountId>, owners: Option<Vec<AccountId>>, max_tx_value: Option<CurrencyBalance>, confirms_required: Option<u16>) -> dispatch::Result {
+fn _create_wallet(origin: Option<Origin>, wallet_id: Option<AccountId>, owners: Option<Vec<AccountId>>, max_tx_value: Option<BalanceOf>, confirms_required: Option<u16>) -> dispatch::Result {
   MultisigWallet::create_wallet(
     origin.unwrap_or(Origin::signed(ACCOUNT1)),
     wallet_id.unwrap_or(self::default_walletid()),
@@ -65,11 +67,11 @@ fn _submit_default_transaction() -> dispatch::Result {
   _submit_transaction(None, None, None, None, None)
 }
 
-fn _submit_transaction(origin: Option<Origin>, wallet_id: Option<AccountId>, destinaton: Option<AccountId>, value: Option<CurrencyBalance>, notes: Option<Vec<u8>>) -> dispatch::Result {
+fn _submit_transaction(origin: Option<Origin>, wallet_id: Option<AccountId>, destinaton: Option<AccountId>, value: Option<BalanceOf>, notes: Option<Vec<u8>>) -> dispatch::Result {
   MultisigWallet::submit_transaction(
     origin.unwrap_or(Origin::signed(ACCOUNT1)),
     wallet_id.unwrap_or(WALLET1),
-    destinaton.unwrap_or(ACCOUNT4),
+    destinaton.unwrap_or(ACCOUNT5),
     value.unwrap_or(50),
     notes.unwrap_or(vec![])
   )
@@ -102,6 +104,8 @@ fn create_wallet_should_work() {
     assert_eq!(wallet.owners, vec![ACCOUNT1, ACCOUNT2, ACCOUNT3]);
     assert_eq!(wallet.max_tx_value, 100);
     assert_eq!(wallet.confirms_required, 2);
+    assert_eq!(wallet.pending_tx_count, 0);
+    assert_eq!(wallet.executed_tx_count, 0);
 
     assert_eq!(wallet_ids_by_account_id(ACCOUNT1), vec![WALLET1]);
     assert_eq!(wallet_ids_by_account_id(ACCOUNT2), vec![WALLET1]);
@@ -119,7 +123,7 @@ fn create_wallet_should_fail_empty_owners() {
 #[test]
 fn create_wallet_should_fail_too_many_owners() {
   with_externalities(&mut test_ext(), || {
-    let accounts : Vec<u64> = (1..MAX_MULTISIG_WALLET_OWNERS as u64 + 2).collect();
+    let accounts : Vec<u64> = (1..MAX_WALLET_OWNERS as u64 + 2).collect();
 
     assert_noop!(_create_wallet(None, None, Some(accounts), None, None), MSG_TOO_MANY_OWNERS);
   });
@@ -139,6 +143,13 @@ fn create_wallet_should_fail_no_confirms_required() {
   });
 }
 
+#[test]
+fn create_wallet_should_fail_zero_max_tx_value() {
+  with_externalities(&mut test_ext(), || {
+    assert_noop!(_create_wallet(None, None, None, Some(0), None), MSG_MAX_TX_VALUE_LOWER_THAN_ALLOWED);
+  });
+}
+
 // Submit transaction tests
 
 #[test]
@@ -154,12 +165,13 @@ fn submit_transaction_should_work() {
     let tx = tx_by_id(1).unwrap();
     assert_eq!(tx.created.account, ACCOUNT1);
     assert_eq!(tx.id, 1);
-    assert_eq!(tx.destination, ACCOUNT4);
+    assert_eq!(tx.destination, ACCOUNT5);
     assert_eq!(tx.value, 50);
     assert!(tx.notes.is_empty());
     assert_eq!(tx.confirmed_by, vec![ACCOUNT1]);
     assert_eq!(tx.executed, false);
 
+    assert_eq!(wallet_by_id(WALLET1).unwrap().pending_tx_count, 1);
     assert_eq!(pending_tx_ids_by_wallet_id(WALLET1), vec![1]);
   });
 }
@@ -234,11 +246,14 @@ fn confirm_transaction_execute_should_work() {
     assert_eq!(tx.confirmed_by, vec![ACCOUNT1, ACCOUNT2]);
     assert_eq!(tx.executed, true);
 
+    let wallet = wallet_by_id(WALLET1).unwrap();
     assert!(pending_tx_ids_by_wallet_id(WALLET1).is_empty());
+    assert_eq!(wallet.pending_tx_count, 0);
     assert_eq!(executed_tx_ids_by_wallet_id(WALLET1), vec![1]);
+    assert_eq!(wallet.executed_tx_count, 1);
 
     // Check whether money was transfered
-    assert_eq!(Balances::free_balance(&ACCOUNT4), 50);
+    assert_eq!(Balances::free_balance(&ACCOUNT5), 50);
   });
 }
 
@@ -279,5 +294,48 @@ fn confirm_transaction_should_fail_account_already_confirmed_tx() {
     deposit_wallet(WALLET1, 1000);
     assert_ok!(_submit_default_transaction()); // TransactionId 1
     assert_noop!(_confirm_transaction(Some(Origin::signed(ACCOUNT1)), None, None), MSG_ACCOUNT_ALREADY_CONFIRMED_TX);
+  });
+}
+
+#[test]
+fn confirm_transaction_should_fail_tx_not_tie_to_wallet() {
+  with_externalities(&mut test_ext(), || {
+    assert_ok!(_create_wallet(
+      Some(Origin::signed(ACCOUNT1)), 
+      Some(WALLET1), 
+      Some(vec![ACCOUNT1, ACCOUNT2]), 
+      Some(100), 
+      Some(2)
+    ));
+    deposit_wallet(WALLET1, 1000);
+    assert_ok!(_create_wallet(
+      Some(Origin::signed(ACCOUNT3)), 
+      Some(WALLET2), 
+      Some(vec![ACCOUNT3, ACCOUNT4]), 
+      Some(100), 
+      Some(2)
+    ));
+    deposit_wallet(WALLET2, 1000);
+
+    assert_ok!(_submit_transaction(
+      Some(Origin::signed(ACCOUNT2)), 
+      Some(WALLET1), 
+      Some(ACCOUNT5), 
+      Some(10), 
+      None
+    ));
+    assert_ok!(_submit_transaction(
+      Some(Origin::signed(ACCOUNT4)), 
+      Some(WALLET2), 
+      Some(ACCOUNT5), 
+      Some(10), 
+      None
+    ));
+
+    assert_noop!(_confirm_transaction(
+      Some(Origin::signed(ACCOUNT1)), 
+      Some(WALLET1), 
+      Some(2)
+    ), MSG_TRANSACTION_NOT_TIED_TO_WALLET);
   });
 }

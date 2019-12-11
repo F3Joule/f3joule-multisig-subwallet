@@ -19,9 +19,9 @@ impl_outer_origin! {
 
 pub type AccountId = u64;
 pub type TransactionId = u64;
-pub type CurrencyBalance = u32;
+pub type BalanceOf = u32;
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Test;
 impl system::Trait for Test {
   type Origin = Origin;
